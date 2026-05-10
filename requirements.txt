@@ -1,0 +1,9 @@
+fastapi
+uvicorn[standard]
+aiofiles
+psutil
+adafruit-circuitpython-ahtx0
+adafruit-circuitpython-dps310
+gpiozero
+lgpio
+# picamera2 is apt-installed; do NOT pip install it

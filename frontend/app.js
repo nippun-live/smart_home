@@ -35,7 +35,7 @@ const elements = {
   heroEventMessage: document.querySelector("#hero-event-message"),
   heroEventTime: document.querySelector("#hero-event-time"),
   heroOccupancy: document.querySelector("#hero-occupancy"),
-  snapshotImage: document.querySelector("#snapshot-image"),
+  cameraStream: document.querySelector("#camera-stream"),
   snapshotEmpty: document.querySelector("#snapshot-empty"),
   sensorHealth: document.querySelector("#sensor-health"),
   sensorHealthLarge: document.querySelector("#sensor-health-large"),
@@ -269,14 +269,16 @@ function renderLatest() {
   renderHealth(elements.sensorHealth, health);
   renderHealth(elements.sensorHealthLarge, health);
 
-  const snapshotUrl = latest?.latest_media_url || lastEvent?.media_url || "";
-  if (snapshotUrl) {
-    elements.snapshotImage.hidden = false;
-    elements.snapshotImage.src = snapshotUrl;
+  const streamAvailable = state.source === "live" || state.source === "warning";
+  if (streamAvailable) {
+    if (!elements.cameraStream.src.endsWith("/stream")) {
+      elements.cameraStream.src = "/stream";
+    }
+    elements.cameraStream.hidden = false;
     elements.snapshotEmpty.hidden = true;
   } else {
-    elements.snapshotImage.hidden = true;
-    elements.snapshotImage.removeAttribute("src");
+    elements.cameraStream.hidden = true;
+    elements.cameraStream.removeAttribute("src");
     elements.snapshotEmpty.hidden = false;
   }
 }
@@ -689,9 +691,9 @@ function bindEvents() {
     setRoute(route, false);
   });
 
-  elements.snapshotImage.addEventListener("error", () => {
-    elements.snapshotImage.hidden = true;
-    elements.snapshotImage.removeAttribute("src");
+  elements.cameraStream.addEventListener("error", () => {
+    elements.cameraStream.hidden = true;
+    elements.cameraStream.removeAttribute("src");
     elements.snapshotEmpty.hidden = false;
   });
 
