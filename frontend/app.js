@@ -125,6 +125,16 @@ const MOCK_CONFIG = {
   },
 };
 
+const API_BASE = window.location.port === "8000"
+  ? ""
+  : `${window.location.protocol}//${window.location.hostname}:8000`;
+
+function apiUrl(path) {
+  if (!path) return path;
+  if (/^https?:\/\//i.test(path) || path.startsWith("data:")) return path;
+  return `${API_BASE}${path}`;
+}
+
 function routeFromLocation() {
   const hash = window.location.hash.replace("#", "").trim();
   const path = window.location.pathname.split("/").filter(Boolean).pop();
@@ -430,7 +440,7 @@ function renderAll() {
 
 async function fetchEndpoint(url, fallback) {
   try {
-    const response = await fetch(url, { headers: { Accept: "application/json" } });
+    const response = await fetch(apiUrl(url), { headers: { Accept: "application/json" } });
     if (!response.ok) {
       throw new Error(`HTTP ${response.status}`);
     }
@@ -512,12 +522,24 @@ async function refreshPanel(loadFn) {
 }
 
 function normalizeLatest(payload) {
-  return payload && !Array.isArray(payload) ? payload : mockLatestPacket();
+  if (!payload || Array.isArray(payload)) return mockLatestPacket();
+  return {
+    ...payload,
+    latest_media_url: apiUrl(payload.latest_media_url || ""),
+    last_event: payload.last_event
+      ? { ...payload.last_event, media_url: apiUrl(payload.last_event.media_url || "") }
+      : null,
+  };
 }
 
 function normalizeEvents(payload) {
-  if (Array.isArray(payload)) return payload;
-  if (Array.isArray(payload?.events)) return payload.events;
+  const events = Array.isArray(payload) ? payload : Array.isArray(payload?.events) ? payload.events : null;
+  if (events) {
+    return events.map((event) => ({
+      ...event,
+      media_url: apiUrl(event.media_url || ""),
+    }));
+  }
   return mockEvents();
 }
 
@@ -659,7 +681,7 @@ function mockStatus() {
 }
 
 async function postJson(url, payload) {
-  const response = await fetch(url, {
+  const response = await fetch(apiUrl(url), {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
