@@ -22,10 +22,19 @@ class DHT11Sensor(SensorAdapter):
 
     def read(self) -> SensorReading:
         sensor = self._load()
-        return SensorReading(
-            values={
-                "temperature_c": sensor.temperature,
-                "humidity_percent": sensor.humidity,
-            },
-            health="ok",
-        )
+        last_error = None
+        for _ in range(3):
+            try:
+                return SensorReading(
+                    values={
+                        "temperature_c": sensor.temperature,
+                        "humidity_percent": sensor.humidity,
+                    },
+                    health="ok",
+                )
+            except RuntimeError as error:
+                last_error = error
+                continue
+        if last_error is not None:
+            raise last_error
+        raise RuntimeError("DHT11 read failed")

@@ -21,8 +21,7 @@ router = APIRouter(prefix="/api")
 
 @router.get("/latest", response_model=LatestPacketModel)
 def latest(container=Depends(get_container)):
-    packet = container.collector.latest_packet or container.collector.sample_once()
-    return packet
+    return container.collector.latest_packet or container.collector.sample_once()
 
 
 @router.get("/events", response_model=list[EventModel])
@@ -62,7 +61,7 @@ def set_thresholds(payload: ThresholdPayloadModel, container=Depends(get_contain
 
 @router.post("/actions/capture", response_model=ActionResponseModel)
 def capture(container=Depends(get_container)):
-    path = container.media_service.create_mock_snapshot(prefix="manual_capture")
+    path = container.media_service.capture_snapshot(prefix="manual_capture")
     event = container.repository.create_event(
         {
             "timestamp": container.now(),
@@ -99,14 +98,18 @@ def media(filename: str, container=Depends(get_container)):
     path = Path(container.settings.media_dir) / filename
     if not path.exists():
         raise HTTPException(status_code=404, detail="Media file not found")
-    media_type = "image/svg+xml" if path.suffix == ".svg" else None
+    media_type = "image/svg+xml" if path.suffix == ".svg" else ("image/jpeg" if path.suffix in {'.jpg', '.jpeg'} else None)
     return FileResponse(path, media_type=media_type)
 
 
 @router.get("/health")
 def health(container=Depends(get_container)):
+    latest = container.collector.latest_packet
     return {
         "status": "ok",
-        "latest_packet_available": container.collector.latest_packet is not None,
+        "latest_packet_available": latest is not None,
         "db_path": str(container.settings.db_path),
+        "camera_enabled": container.settings.camera_enabled,
+        "microphone_enabled": container.settings.microphone_enabled,
+        "last_noise_score": None if latest is None else latest.get("noise_score"),
     }

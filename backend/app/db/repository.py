@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -32,6 +33,7 @@ class Repository:
                     occupancy INTEGER,
                     sensor_health_json TEXT NOT NULL
                 );
+                CREATE INDEX IF NOT EXISTS idx_sensor_readings_timestamp ON sensor_readings(timestamp);
 
                 CREATE TABLE IF NOT EXISTS events (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -43,6 +45,7 @@ class Repository:
                     acknowledged INTEGER NOT NULL DEFAULT 0,
                     metadata_json TEXT NOT NULL DEFAULT '{}'
                 );
+                CREATE INDEX IF NOT EXISTS idx_events_timestamp ON events(timestamp);
 
                 CREATE TABLE IF NOT EXISTS system_status (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -84,25 +87,23 @@ class Repository:
 
     def latest_reading(self) -> dict[str, Any] | None:
         with self._connect() as connection:
-            row = connection.execute(
-                "SELECT * FROM sensor_readings ORDER BY id DESC LIMIT 1"
-            ).fetchone()
-        if not row:
-            return None
-        return self._row_to_sensor(row)
+            row = connection.execute("SELECT * FROM sensor_readings ORDER BY id DESC LIMIT 1").fetchone()
+        return self._row_to_sensor(row) if row else None
 
     def history(self, hours: int, limit: int = 500) -> list[dict[str, Any]]:
+        cutoff = (datetime.now(timezone.utc) - timedelta(hours=max(1, hours))).isoformat()
         with self._connect() as connection:
             rows = connection.execute(
                 """
                 SELECT timestamp, temperature_c, humidity_percent, pressure_hpa, noise_score
                 FROM sensor_readings
-                ORDER BY id DESC
+                WHERE timestamp >= ?
+                ORDER BY timestamp ASC
                 LIMIT ?
                 """,
-                (max(limit, hours),),
+                (cutoff, limit),
             ).fetchall()
-        return [dict(row) for row in reversed(rows)]
+        return [dict(row) for row in rows]
 
     def create_event(self, event: dict[str, Any]) -> dict[str, Any]:
         with self._connect() as connection:
@@ -128,18 +129,12 @@ class Repository:
 
     def list_events(self, limit: int) -> list[dict[str, Any]]:
         with self._connect() as connection:
-            rows = connection.execute(
-                "SELECT * FROM events ORDER BY id DESC LIMIT ?",
-                (limit,),
-            ).fetchall()
+            rows = connection.execute("SELECT * FROM events ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
         return [self._row_to_event(row) for row in rows]
 
     def get_event(self, event_id: int) -> dict[str, Any] | None:
         with self._connect() as connection:
-            row = connection.execute(
-                "SELECT * FROM events WHERE id = ?",
-                (event_id,),
-            ).fetchone()
+            row = connection.execute("SELECT * FROM events WHERE id = ?", (event_id,)).fetchone()
         return self._row_to_event(row) if row else None
 
     def latest_event(self) -> dict[str, Any] | None:

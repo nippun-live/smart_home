@@ -7,11 +7,13 @@ from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 from .api.routes import router
 from .core.config import Settings
 from .core.logging import configure_logging
 from .db.repository import Repository
+from .services.audio_service import AudioService
 from .services.event_engine import EventEngine
 from .services.led_service import MockLedService
 from .services.media_service import MediaService
@@ -26,6 +28,7 @@ class Container:
     status_service: StatusService
     media_service: MediaService
     led_service: MockLedService
+    audio_service: AudioService
     event_engine: EventEngine
     collector: SensorCollector
 
@@ -53,8 +56,11 @@ class Container:
         self.settings.motion_delta_cm = normalized["motion_delta_cm"]
         self.settings.presence_distance_cm = normalized["presence_distance_cm"]
         self.settings.noise_threshold = normalized["noise_threshold"]
-        self.event_engine.motion_delta_cm = normalized["motion_delta_cm"]
-        self.event_engine.presence_distance_cm = normalized["presence_distance_cm"]
+        self.event_engine.settings.temperature_high_c = normalized["temperature_high_c"]
+        self.event_engine.settings.humidity_high_percent = normalized["humidity_high_percent"]
+        self.event_engine.settings.motion_delta_cm = normalized["motion_delta_cm"]
+        self.event_engine.settings.presence_distance_cm = normalized["presence_distance_cm"]
+        self.event_engine.settings.noise_threshold = normalized["noise_threshold"]
         return normalized
 
     def now(self) -> str:
@@ -64,19 +70,23 @@ class Container:
 def build_container(settings: Settings) -> Container:
     repository = Repository(settings.db_path)
     status_service = StatusService(root_path=Path("."))
-    media_service = MediaService(settings.media_dir)
-    led_service = MockLedService()
-    event_engine = EventEngine(
-        presence_distance_cm=settings.presence_distance_cm,
-        motion_delta_cm=settings.motion_delta_cm,
-        led_service=led_service,
+    media_service = MediaService(
+        settings.media_dir,
+        camera_enabled=settings.camera_enabled,
+        mock_fallback=settings.mock_camera_writes_files,
+        resolution=(settings.camera_resolution_width, settings.camera_resolution_height),
+        fake_hardware=settings.fake_hardware,
     )
+    led_service = MockLedService()
+    audio_service = AudioService(settings)
+    event_engine = EventEngine(settings=settings, led_service=led_service)
     collector = SensorCollector(
         settings=settings,
         repository=repository,
         status_service=status_service,
         event_engine=event_engine,
         media_service=media_service,
+        audio_service=audio_service,
     )
     return Container(
         settings=settings,
@@ -84,6 +94,7 @@ def build_container(settings: Settings) -> Container:
         status_service=status_service,
         media_service=media_service,
         led_service=led_service,
+        audio_service=audio_service,
         event_engine=event_engine,
         collector=collector,
     )
@@ -110,6 +121,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         allow_headers=["*"],
     )
     app.include_router(router)
+    if settings.frontend_dir.exists():
+        app.mount("/", StaticFiles(directory=settings.frontend_dir, html=True), name="frontend")
     return app
 
 

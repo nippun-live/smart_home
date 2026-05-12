@@ -1,18 +1,19 @@
 from __future__ import annotations
 
 import logging
+import math
 import threading
-import time
 from datetime import datetime, timezone
 from typing import Any
 
 from ..core.config import Settings
 from ..db.repository import Repository
 from ..sensors.aht20 import AHT20Sensor
-from ..sensors.base import SensorAdapter
+from ..sensors.base import SensorAdapter, SensorReading
 from ..sensors.dht11 import DHT11Sensor
 from ..sensors.dps310 import DPS310Sensor
 from ..sensors.ultrasonic import UltrasonicSensor
+from .audio_service import AudioService
 from .event_engine import EventEngine
 from .media_service import MediaService
 from .status_service import StatusService
@@ -26,14 +27,15 @@ class FakeSensor(SensorAdapter):
         self.values = values
         self._tick = 0
 
-    def read(self):
+    def read(self) -> SensorReading:
         self._tick += 1
         values = dict(self.values)
         if "distance_cm" in values:
             values["distance_cm"] = 120.0 if self._tick % 4 else 45.0
         if "temperature_c" in values:
-            values["temperature_c"] = round(float(values["temperature_c"]) + (self._tick % 3) * 0.1, 1)
-        from ..sensors.base import SensorReading
+            values["temperature_c"] = round(float(values["temperature_c"]) + math.sin(self._tick / 4.0) * 0.4, 1)
+        if "humidity_percent" in values:
+            values["humidity_percent"] = round(float(values["humidity_percent"]) + math.cos(self._tick / 5.0) * 1.5, 1)
         return SensorReading(values=values, health="ok")
 
 
@@ -45,12 +47,14 @@ class SensorCollector:
         status_service: StatusService,
         event_engine: EventEngine,
         media_service: MediaService,
+        audio_service: AudioService,
     ):
         self.settings = settings
         self.repository = repository
         self.status_service = status_service
         self.event_engine = event_engine
         self.media_service = media_service
+        self.audio_service = audio_service
         self.latest_packet: dict[str, Any] | None = None
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
@@ -65,7 +69,7 @@ class SensorCollector:
                 sensors.append(FakeSensor("ultrasonic", {"distance_cm": 120.0}))
             return sensors
 
-        sensors = []
+        sensors: list[SensorAdapter] = []
         if self.settings.temp_humidity_sensor == "dht11":
             sensors.append(DHT11Sensor(self.settings.dht11_gpio_pin))
         elif self.settings.temp_humidity_sensor == "aht20":
@@ -115,30 +119,32 @@ class SensorCollector:
                 reading = sensor.read()
                 packet.update(reading.values)
                 packet["sensor_health"][sensor.name] = reading.health
-                if sensor.name == "dht11":
-                    packet["sensor_health"]["aht20"] = packet["sensor_health"].get("aht20", "offline")
                 LOGGER.debug("Sensor %s reading: %s", sensor.name, reading.values)
             except Exception as error:
                 LOGGER.warning("Sensor %s read failed: %s", sensor.name, error)
                 packet["sensor_health"][sensor.name] = "error"
 
+        audio_reading = self.audio_service.read_noise_score()
+        packet["noise_score"] = audio_reading.noise_score
+        packet["sensor_health"]["microphone"] = audio_reading.health
+
         if packet.get("distance_cm") is not None:
             packet["occupancy"] = packet["distance_cm"] < self.settings.presence_distance_cm
-        packet["sensor_health"]["camera"] = "ok"
-        packet["sensor_health"]["storage"] = "ok"
-        packet["sensor_health"]["led"] = "ok"
 
         status = self.status_service.read_status()
+        packet["sensor_health"]["storage"] = "warning" if (status.get("disk_free_gb") or 9999) <= self.settings.storage_warning_gb else "ok"
+        packet["sensor_health"]["camera"] = "ok" if self.settings.camera_enabled else "offline"
+        packet["sensor_health"]["led"] = "ok"
+
         self.repository.save_status(status)
         self.repository.save_sensor_reading(packet)
 
-        media_path = None
-        decision = self.event_engine.evaluate(packet, media_path=media_path)
-        if decision.event:
-            if decision.event["event_type"] in {"PRESENCE_DETECTED", "MOTION_DETECTED"}:
-                snapshot = self.media_service.create_mock_snapshot(prefix=decision.event["event_type"].lower())
-                decision.event["media_path"] = str(snapshot)
-            self.repository.create_event(decision.event)
+        decision = self.event_engine.evaluate(packet, status)
+        for event in decision.events:
+            if decision.should_capture_snapshot and event["event_type"] in {"PRESENCE_DETECTED", "MOTION_DETECTED", "LOUD_NOISE"}:
+                snapshot = self.media_service.capture_snapshot(prefix=event["event_type"].lower())
+                event["media_path"] = str(snapshot)
+            self.repository.create_event(event)
 
         latest_event = self.repository.latest_event()
         packet["last_event"] = latest_event
