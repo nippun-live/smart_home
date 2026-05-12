@@ -10,6 +10,7 @@ const state = {
   events: [],
   history: [],
   status: null,
+  thresholds: null,
   endpointModes: {
     latest: "mock",
     events: "mock",
@@ -59,6 +60,7 @@ const elements = {
   forceRefresh: document.querySelector("#force-refresh"),
   triggerCapture: document.querySelector("#trigger-capture"),
   triggerLed: document.querySelector("#trigger-led"),
+  thresholdInputs: [...document.querySelectorAll("#threshold-form input[name]")],
 };
 
 const metricBindings = {
@@ -234,7 +236,7 @@ function applyMetricTone(binding, tone) {
 
 function renderLatest() {
   const latest = state.latest;
-  const lastEvent = latest?.last_event || state.events[0] || null;
+  const lastEvent = newestEvent(latest?.last_event, state.events[0]);
   const system = latest?.system || state.status || {};
   const occupancy = latest?.occupancy;
   const health = latest?.sensor_health || {};
@@ -279,7 +281,7 @@ function renderLatest() {
   renderHealth(elements.sensorHealth, health);
   renderHealth(elements.sensorHealthLarge, health);
 
-  const snapshotUrl = latest?.latest_media_url || lastEvent?.media_url || "";
+  const snapshotUrl = latest?.latest_media_url || state.events.find((event) => event.media_url)?.media_url || lastEvent?.media_url || "";
   if (snapshotUrl) {
     elements.snapshotImage.hidden = false;
     elements.snapshotImage.src = snapshotUrl;
@@ -315,6 +317,12 @@ function renderHealth(container, sensorHealth) {
 function setSeverityBadge(element, severity, label) {
   element.dataset.severity = severity || "low";
   element.textContent = label || "Standby";
+}
+
+function newestEvent(...events) {
+  return events
+    .filter(Boolean)
+    .sort((left, right) => new Date(right.timestamp).getTime() - new Date(left.timestamp).getTime())[0] || null;
 }
 
 function renderEvents() {
@@ -436,6 +444,16 @@ function renderAll() {
   renderEvents();
   renderHistory();
   renderStatus();
+  renderThresholds();
+}
+
+function renderThresholds() {
+  elements.thresholdInputs.forEach((input) => {
+    const value = state.thresholds?.[input.name];
+    if (value !== undefined && value !== null && document.activeElement !== input) {
+      input.value = value;
+    }
+  });
 }
 
 async function fetchEndpoint(url, fallback) {
@@ -480,6 +498,12 @@ async function loadStatus() {
   state.status = normalizeStatus(result.data);
 }
 
+async function loadThresholds() {
+  const result = await fetchEndpoint("/api/config/thresholds", () => ({ ...MOCK_CONFIG.thresholds }));
+  state.thresholds = normalizeThresholds(result.data);
+  Object.assign(MOCK_CONFIG.thresholds, state.thresholds);
+}
+
 function updateSourceFromEndpoints() {
   const modes = Object.values(state.endpointModes);
   const allLive = modes.every((mode) => mode === "live");
@@ -508,7 +532,7 @@ function updateSourceFromEndpoints() {
 }
 
 async function hydrateAll() {
-  await Promise.all([loadLatest(), loadEvents(), loadHistory(), loadStatus()]);
+  await Promise.all([loadLatest(), loadEvents(), loadHistory(), loadStatus(), loadThresholds()]);
   updateSourceFromEndpoints();
   markSynced();
   renderAll();
@@ -551,6 +575,16 @@ function normalizeHistory(payload) {
 
 function normalizeStatus(payload) {
   return payload && !Array.isArray(payload) ? payload : mockStatus();
+}
+
+function normalizeThresholds(payload) {
+  const source = payload && !Array.isArray(payload) ? payload : MOCK_CONFIG.thresholds;
+  return Object.fromEntries(
+    Object.entries(MOCK_CONFIG.thresholds).map(([key, fallback]) => {
+      const parsed = Number(source[key]);
+      return [key, Number.isFinite(parsed) ? parsed : fallback];
+    })
+  );
 }
 
 function mockLatestPacket() {
@@ -734,7 +768,10 @@ function bindEvents() {
     }
 
     try {
-      await postJson("/api/config/thresholds", payload);
+      const saved = await postJson("/api/config/thresholds", payload);
+      state.thresholds = normalizeThresholds(saved);
+      Object.assign(MOCK_CONFIG.thresholds, state.thresholds);
+      renderThresholds();
       elements.actionResponse.textContent = "Thresholds saved to backend.";
     } catch {
       elements.actionResponse.textContent = "Threshold save failed. Backend endpoint may not be implemented yet.";
@@ -748,8 +785,12 @@ function bindEvents() {
     }
 
     try {
-      await postJson("/api/actions/capture", {});
-      elements.actionResponse.textContent = "Capture request sent.";
+      const result = await postJson("/api/actions/capture", {});
+      elements.actionResponse.textContent = result.message || "Capture request sent.";
+      await Promise.all([loadLatest(), loadEvents()]);
+      updateSourceFromEndpoints();
+      markSynced();
+      renderAll();
     } catch {
       elements.actionResponse.textContent = "Capture request failed.";
     }
@@ -762,8 +803,12 @@ function bindEvents() {
     }
 
     try {
-      await postJson("/api/actions/test-led", {});
-      elements.actionResponse.textContent = "LED test request sent.";
+      const result = await postJson("/api/actions/test-led", {});
+      elements.actionResponse.textContent = result.message || "LED test request sent.";
+      await Promise.all([loadLatest(), loadEvents()]);
+      updateSourceFromEndpoints();
+      markSynced();
+      renderAll();
     } catch {
       elements.actionResponse.textContent = "LED test request failed.";
     }

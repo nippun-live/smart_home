@@ -4,14 +4,16 @@ import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
+
 
 @dataclass
 class Settings:
     app_name: str = "Smart Home Edge Hub API"
     app_version: str = "0.2.0"
-    db_path: Path = Path("data/smart_home.db")
-    media_dir: Path = Path("data/media")
-    frontend_dir: Path = Path("frontend")
+    db_path: Path = PROJECT_ROOT / "data/smart_home.db"
+    media_dir: Path = PROJECT_ROOT / "data/media"
+    frontend_dir: Path = PROJECT_ROOT / "frontend"
     sensor_interval_seconds: float = 1.0
     temp_humidity_sensor: str = "dht11"
     pressure_sensor: str = "none"
@@ -55,6 +57,13 @@ class Settings:
 
     @classmethod
     def from_env(cls) -> "Settings":
+        def get_path(name: str, default: Path) -> Path:
+            raw = os.getenv(name)
+            if raw is None:
+                return default
+            path = Path(raw).expanduser()
+            return path if path.is_absolute() else PROJECT_ROOT / path
+
         def get_bool(name: str, default: bool) -> bool:
             raw = os.getenv(name)
             if raw is None:
@@ -70,9 +79,9 @@ class Settings:
             return int(raw) if raw is not None else default
 
         settings = cls()
-        settings.db_path = Path(os.getenv("SMART_HOME_DB_PATH", str(settings.db_path)))
-        settings.media_dir = Path(os.getenv("SMART_HOME_MEDIA_DIR", str(settings.media_dir)))
-        settings.frontend_dir = Path(os.getenv("SMART_HOME_FRONTEND_DIR", str(settings.frontend_dir)))
+        settings.db_path = get_path("SMART_HOME_DB_PATH", settings.db_path)
+        settings.media_dir = get_path("SMART_HOME_MEDIA_DIR", settings.media_dir)
+        settings.frontend_dir = get_path("SMART_HOME_FRONTEND_DIR", settings.frontend_dir)
         settings.sensor_interval_seconds = get_float("SMART_HOME_SENSOR_INTERVAL", settings.sensor_interval_seconds)
         settings.temp_humidity_sensor = os.getenv("SMART_HOME_TEMP_HUMIDITY_SENSOR", settings.temp_humidity_sensor).lower()
         settings.pressure_sensor = os.getenv("SMART_HOME_PRESSURE_SENSOR", settings.pressure_sensor).lower()

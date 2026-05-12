@@ -141,6 +141,18 @@ class Repository:
         events = self.list_events(limit=1)
         return events[0] if events else None
 
+    def latest_media_event(self) -> dict[str, Any] | None:
+        with self._connect() as connection:
+            row = connection.execute(
+                """
+                SELECT * FROM events
+                WHERE media_path IS NOT NULL AND media_path != ''
+                ORDER BY id DESC
+                LIMIT 1
+                """
+            ).fetchone()
+        return self._row_to_event(row) if row else None
+
     def save_status(self, status: dict[str, Any]) -> None:
         with self._connect() as connection:
             connection.execute(

@@ -52,6 +52,10 @@ def test_frontend_contract_endpoints():
             assert status.status_code == 200
             assert status.json()["status"] == "online"
 
+            frontend = client.get("/")
+            assert frontend.status_code == 200
+            assert "Smart Home Hub" in frontend.text
+
 
 def test_thresholds_capture_and_led_actions():
     with tempfile.TemporaryDirectory() as temp_dir:
@@ -70,6 +74,9 @@ def test_thresholds_capture_and_led_actions():
             )
             assert response.status_code == 200
             assert response.json()["motion_delta_cm"] == 12.0
+            saved = client.get("/api/config/thresholds")
+            assert saved.status_code == 200
+            assert saved.json()["noise_threshold"] == 0.8
 
             capture = client.post("/api/actions/capture", json={})
             assert capture.status_code == 200
@@ -81,6 +88,9 @@ def test_thresholds_capture_and_led_actions():
             led = client.post("/api/actions/test-led", json={})
             assert led.status_code == 200
             assert led.json()["ok"] is True
+
+            latest_media = client.app.state.container.repository.latest_media_event()
+            assert latest_media["media_url"] == media_url
 
 
 def test_ultrasonic_triggers_mock_led_event():

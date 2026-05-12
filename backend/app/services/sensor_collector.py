@@ -147,8 +147,9 @@ class SensorCollector:
             self.repository.create_event(event)
 
         latest_event = self.repository.latest_event()
+        latest_media_event = self.repository.latest_media_event()
         packet["last_event"] = latest_event
-        packet["latest_media_url"] = latest_event["media_url"] if latest_event else ""
+        packet["latest_media_url"] = latest_media_event["media_url"] if latest_media_event else ""
         packet["system"] = {key: value for key, value in status.items() if key != "timestamp"}
         self.latest_packet = packet
         return packet

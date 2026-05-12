@@ -5,6 +5,7 @@ from pathlib import Path
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse
 
+from ..core.config import PROJECT_ROOT
 from ..schemas.models import (
     ActionResponseModel,
     EventModel,
@@ -95,7 +96,15 @@ def test_led(container=Depends(get_container)):
 
 @router.get("/media/{filename}")
 def media(filename: str, container=Depends(get_container)):
-    path = Path(container.settings.media_dir) / filename
+    if Path(filename).name != filename:
+        raise HTTPException(status_code=400, detail="Invalid media filename")
+
+    candidates = [
+        Path(container.settings.media_dir) / filename,
+        Path(container.settings.db_path).parent / "media" / filename,
+        PROJECT_ROOT / "data" / "media" / filename,
+    ]
+    path = next((candidate for candidate in candidates if candidate.exists()), candidates[0])
     if not path.exists():
         raise HTTPException(status_code=404, detail="Media file not found")
     media_type = "image/svg+xml" if path.suffix == ".svg" else ("image/jpeg" if path.suffix in {'.jpg', '.jpeg'} else None)
@@ -109,6 +118,7 @@ def health(container=Depends(get_container)):
         "status": "ok",
         "latest_packet_available": latest is not None,
         "db_path": str(container.settings.db_path),
+        "media_dir": str(container.settings.media_dir),
         "camera_enabled": container.settings.camera_enabled,
         "microphone_enabled": container.settings.microphone_enabled,
         "last_noise_score": None if latest is None else latest.get("noise_score"),

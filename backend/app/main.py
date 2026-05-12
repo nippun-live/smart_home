@@ -3,7 +3,6 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -69,7 +68,7 @@ class Container:
 
 def build_container(settings: Settings) -> Container:
     repository = Repository(settings.db_path)
-    status_service = StatusService(root_path=Path("."))
+    status_service = StatusService(root_path=settings.db_path.parent)
     media_service = MediaService(
         settings.media_dir,
         camera_enabled=settings.camera_enabled,
