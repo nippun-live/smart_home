@@ -21,8 +21,9 @@ from backend import database, system_status
 from events import camera_manager
 from sensors import sensor_collector
 
-SNAPSHOT_DIR = Path.home() / "smart-hub" / "data" / "snapshots"
-FRONTEND_DIR = Path.home() / "smart-hub" / "frontend"
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+SNAPSHOT_DIR = PROJECT_ROOT / "data" / "snapshots"
+FRONTEND_DIR = PROJECT_ROOT / "frontend"
 
 
 @asynccontextmanager
@@ -97,6 +98,14 @@ def get_history(hours: int = 24):
 @app.get("/api/events")
 def get_events(limit: int = 50):
     return [_enrich_event(e) for e in database.get_events(limit)]
+
+
+@app.get("/api/events/{event_id}")
+def get_event(event_id: int):
+    event = database.get_event(event_id)
+    if event is None:
+        raise HTTPException(status_code=404, detail="Event not found")
+    return _enrich_event(event)
 
 
 @app.get("/api/status")

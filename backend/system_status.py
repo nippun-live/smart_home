@@ -4,7 +4,8 @@ from pathlib import Path
 
 import psutil
 
-DATA_DIR = Path.home() / "smart-hub" / "data"
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+DATA_DIR = PROJECT_ROOT / "data"
 
 
 def get_status() -> dict:

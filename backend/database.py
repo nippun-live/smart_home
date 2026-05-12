@@ -1,7 +1,8 @@
 import sqlite3
 from pathlib import Path
 
-DB_PATH = Path.home() / "smart-hub" / "data" / "homehub.db"
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+DB_PATH = PROJECT_ROOT / "data" / "homehub.db"
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS sensor_readings (
@@ -110,6 +111,14 @@ def get_events(limit: int = 50) -> list[dict]:
             "SELECT * FROM events ORDER BY id DESC LIMIT ?", (limit,)
         ).fetchall()
     return [dict(r) for r in rows]
+
+
+def get_event(event_id: int) -> dict | None:
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT * FROM events WHERE id = ?", (event_id,)
+        ).fetchone()
+    return dict(row) if row else None
 
 
 def get_config(key: str, default: str | None = None) -> str | None:

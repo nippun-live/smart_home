@@ -2,7 +2,8 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-SNAPSHOT_DIR = Path.home() / "smart-hub" / "data" / "snapshots"
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+SNAPSHOT_DIR = PROJECT_ROOT / "data" / "snapshots"
 
 
 def capture_snapshot(event_type: str) -> str:

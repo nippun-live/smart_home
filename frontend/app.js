@@ -5,20 +5,27 @@ const POLL_INTERVALS = {
   status: 5000,
 };
 
+const ROUTES = ["dashboard", "events", "history", "settings", "status"];
+
 const state = {
   latest: null,
   events: [],
   history: [],
   status: null,
+  source: "loading",
+  lastSync: null,
+  route: "dashboard",
   endpointModes: {
     latest: "mock",
     events: "mock",
     history: "mock",
     status: "mock",
   },
-  source: "loading",
-  lastSync: null,
-  route: "dashboard",
+  camera: {
+    requested: false,
+    loaded: false,
+    error: false,
+  },
 };
 
 const elements = {
@@ -93,7 +100,7 @@ const chartBindings = {
     canvas: document.querySelector("#chart-temperature"),
     label: document.querySelector("#chart-temp-range"),
     color: "#4af0ae",
-    unit: "°C",
+    unit: "\u00B0C",
   },
   humidity_percent: {
     canvas: document.querySelector("#chart-humidity"),
@@ -129,9 +136,7 @@ function routeFromLocation() {
   const hash = window.location.hash.replace("#", "").trim();
   const path = window.location.pathname.split("/").filter(Boolean).pop();
   const requested = hash || path || "dashboard";
-  return ["dashboard", "events", "history", "settings", "status"].includes(requested)
-    ? requested
-    : "dashboard";
+  return ROUTES.includes(requested) ? requested : "dashboard";
 }
 
 function setRoute(route, pushHistory = true) {
@@ -166,7 +171,11 @@ function setConnectionState(kind, label, copy = "") {
 
 function markSynced() {
   state.lastSync = new Date();
-  elements.lastSync.textContent = `${state.lastSync.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}`;
+  elements.lastSync.textContent = state.lastSync.toLocaleTimeString([], {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  });
 }
 
 function formatTimestamp(value) {
@@ -222,65 +231,142 @@ function applyMetricTone(binding, tone) {
   binding.value.closest(".metric-card").dataset.tone = tone;
 }
 
+function isLiveData() {
+  return state.source === "live" || state.source === "warning";
+}
+
+function sensorStatusCopy(status, offlineMessage) {
+  if (status === "warning") return "Sensor warning";
+  if (status === "error") return "Sensor error";
+  if (status === "offline") return offlineMessage;
+  return "No reading available";
+}
+
+function setSnapshotPlaceholder(message, hidden = false) {
+  elements.snapshotEmpty.textContent = message;
+  elements.snapshotEmpty.hidden = hidden;
+}
+
+function renderCameraPanel(liveData) {
+  if (!liveData) {
+    state.camera.requested = false;
+    state.camera.loaded = false;
+    state.camera.error = false;
+    elements.cameraStream.hidden = true;
+    elements.cameraStream.removeAttribute("src");
+    setSnapshotPlaceholder("Camera preview is available when the live backend is running.");
+    return;
+  }
+
+  if (!state.camera.requested || !elements.cameraStream.src.endsWith("/stream")) {
+    state.camera.requested = true;
+    state.camera.loaded = false;
+    state.camera.error = false;
+    elements.cameraStream.src = "/stream";
+  }
+
+  if (state.camera.loaded) {
+    elements.cameraStream.hidden = false;
+    setSnapshotPlaceholder("", true);
+    return;
+  }
+
+  if (state.camera.error) {
+    elements.cameraStream.hidden = true;
+    setSnapshotPlaceholder("Live feed unavailable");
+    return;
+  }
+
+  elements.cameraStream.hidden = false;
+  setSnapshotPlaceholder("Connecting live feed...");
+}
+
 function renderLatest() {
   const latest = state.latest;
   const lastEvent = latest?.last_event || state.events[0] || null;
   const system = latest?.system || state.status || {};
   const occupancy = latest?.occupancy;
   const health = latest?.sensor_health || {};
+  const liveData = isLiveData();
 
-  metricBindings.temperature.value.textContent = formatNumber(latest?.temperature_c, "°C");
-  metricBindings.temperature.foot.textContent = latest ? "Environmental reading" : "Waiting for sensor";
+  metricBindings.temperature.value.textContent = formatNumber(latest?.temperature_c, "\u00B0C");
+  metricBindings.temperature.foot.textContent = latest?.temperature_c !== null && latest?.temperature_c !== undefined
+    ? "Environmental reading"
+    : liveData
+      ? sensorStatusCopy(health.aht20, "Temperature sensor offline")
+      : "Waiting for sensor";
   applyMetricTone(metricBindings.temperature, latest?.temperature_c > 30 ? "warning" : "normal");
 
   metricBindings.humidity.value.textContent = formatPercent(latest?.humidity_percent);
-  metricBindings.humidity.foot.textContent = latest ? "Relative humidity" : "Waiting for sensor";
+  metricBindings.humidity.foot.textContent = latest?.humidity_percent !== null && latest?.humidity_percent !== undefined
+    ? "Relative humidity"
+    : liveData
+      ? sensorStatusCopy(health.aht20, "Humidity sensor offline")
+      : "Waiting for sensor";
   applyMetricTone(metricBindings.humidity, latest?.humidity_percent > 70 ? "warning" : "normal");
 
   metricBindings.pressure.value.textContent = formatNumber(latest?.pressure_hpa, "hPa");
-  metricBindings.pressure.foot.textContent = latest ? "Atmospheric pressure" : "Waiting for sensor";
+  metricBindings.pressure.foot.textContent = latest?.pressure_hpa !== null && latest?.pressure_hpa !== undefined
+    ? "Atmospheric pressure"
+    : liveData
+      ? sensorStatusCopy(health.dps310, "Pressure sensor offline")
+      : "Waiting for sensor";
   applyMetricTone(metricBindings.pressure, "normal");
 
   metricBindings.noise.value.textContent = formatNumber(latest?.noise_score, "", 2);
-  metricBindings.noise.foot.textContent = latest ? "Rolling amplitude score" : "Waiting for sensor";
+  metricBindings.noise.foot.textContent = latest?.noise_score !== null && latest?.noise_score !== undefined
+    ? "Rolling amplitude score"
+    : liveData
+      ? sensorStatusCopy(health.microphone, "Noise sensor offline")
+      : "Waiting for sensor";
   applyMetricTone(metricBindings.noise, latest?.noise_score > 0.7 ? "alert" : "normal");
 
   metricBindings.distance.value.textContent = formatNumber(latest?.distance_cm, "cm");
-  metricBindings.distance.foot.textContent = latest ? "Ultrasonic distance" : "Waiting for sensor";
+  metricBindings.distance.foot.textContent = latest?.distance_cm !== null && latest?.distance_cm !== undefined
+    ? "Ultrasonic distance"
+    : liveData
+      ? sensorStatusCopy(health.ultrasonic, "Distance sensor offline")
+      : "Waiting for sensor";
   applyMetricTone(metricBindings.distance, latest?.distance_cm < 80 ? "warning" : "normal");
 
   metricBindings.occupancy.value.textContent = occupancy === true ? "Detected" : occupancy === false ? "Clear" : "--";
-  metricBindings.occupancy.foot.textContent = latest ? "Presence estimate" : "Waiting for sensor";
+  metricBindings.occupancy.foot.textContent = latest?.occupancy !== null && latest?.occupancy !== undefined
+    ? "Presence estimate"
+    : liveData
+      ? sensorStatusCopy(health.ultrasonic, "Occupancy unavailable")
+      : "Waiting for sensor";
   applyMetricTone(metricBindings.occupancy, occupancy === true ? "warning" : "normal");
 
-  elements.heroEventTitle.textContent = lastEvent ? titleFromEventType(lastEvent.event_type) : "Waiting for event stream";
-  elements.heroEventMessage.textContent = lastEvent?.message || "The hub will surface motion, noise, and environmental alerts here.";
-  elements.heroEventTime.textContent = lastEvent ? formatTimestamp(lastEvent.timestamp) : "No event yet";
+  elements.heroEventTitle.textContent = lastEvent
+    ? titleFromEventType(lastEvent.event_type)
+    : liveData
+      ? "No events recorded yet"
+      : "Waiting for event stream";
+  elements.heroEventMessage.textContent = lastEvent?.message || (liveData
+    ? "The backend is live, but no events have been recorded yet."
+    : "The hub will surface motion, noise, and environmental alerts here.");
+  elements.heroEventTime.textContent = lastEvent
+    ? formatTimestamp(lastEvent.timestamp)
+    : liveData
+      ? "No event recorded"
+      : "No event yet";
   elements.heroOccupancy.textContent = occupancy === true ? "Occupied" : occupancy === false ? "No presence" : "Unknown";
 
-  setSeverityBadge(elements.heroSeverity, lastEvent?.severity, lastEvent ? titleFromEventType(lastEvent.event_type) : "Standby");
+  setSeverityBadge(
+    elements.heroSeverity,
+    lastEvent?.severity,
+    lastEvent ? titleFromEventType(lastEvent.event_type) : "Standby",
+  );
 
   elements.systemStatus.textContent = system.status || "Unknown";
   elements.systemDisk.textContent = Number.isFinite(system.disk_free_gb) ? `${system.disk_free_gb.toFixed(1)} GB` : "--";
   elements.systemIp.textContent = system.ip_address || "--";
   elements.systemUptime.textContent = formatUptime(system.uptime_seconds);
-  elements.systemCpu.textContent = system.cpu_temp_c ? `${Number(system.cpu_temp_c).toFixed(1)} °C` : "--";
+  elements.systemCpu.textContent = system.cpu_temp_c ? `${Number(system.cpu_temp_c).toFixed(1)} \u00B0C` : "--";
 
   renderHealth(elements.sensorHealth, health);
   renderHealth(elements.sensorHealthLarge, health);
-
-  const streamAvailable = state.source === "live" || state.source === "warning";
-  if (streamAvailable) {
-    if (!elements.cameraStream.src.endsWith("/stream")) {
-      elements.cameraStream.src = "/stream";
-    }
-    elements.cameraStream.hidden = false;
-    elements.snapshotEmpty.hidden = true;
-  } else {
-    elements.cameraStream.hidden = true;
-    elements.cameraStream.removeAttribute("src");
-    elements.snapshotEmpty.hidden = false;
-  }
+  renderCameraPanel(liveData);
 }
 
 function renderHealth(container, sensorHealth) {
@@ -313,13 +399,14 @@ function renderEvents() {
   elements.eventList.innerHTML = "";
 
   if (!state.events.length) {
-    elements.eventsSummary.textContent = "No events loaded yet.";
-    elements.eventList.innerHTML = '<article class="event-card"><p class="event-type">No events yet</p><p class="event-message">Motion, noise, and environmental alerts will appear here.</p></article>';
+    const liveData = isLiveData();
+    elements.eventsSummary.textContent = liveData ? "No events recorded yet." : "No events loaded yet.";
+    elements.eventList.innerHTML = `<article class="event-card"><p class="event-type">No events yet</p><p class="event-message">${liveData ? "The backend is live, but the event log is still empty." : "Motion, noise, and environmental alerts will appear here."}</p></article>`;
     return;
   }
 
   const securityEvents = state.events.filter((event) =>
-    ["MOTION_DETECTED", "LOUD_NOISE", "PRESENCE_DETECTED"].includes(event.event_type)
+    ["MOTION_DETECTED", "LOUD_NOISE", "PRESENCE_DETECTED"].includes(event.event_type),
   ).length;
 
   elements.eventsSummary.textContent = `${state.events.length} events loaded, ${securityEvents} security-related.`;
@@ -347,7 +434,9 @@ function renderEvents() {
 function renderHistory() {
   elements.historySummary.textContent = state.history.length
     ? `${state.history.length} history points loaded for graphing.`
-    : "Graphs render from `/api/history?hours=24` when available.";
+    : isLiveData()
+      ? "No history has been recorded yet."
+      : "Graphs render from `/api/history?hours=24` when available.";
 
   Object.entries(chartBindings).forEach(([key, binding]) => {
     const values = state.history.map((point) => ({
@@ -420,7 +509,11 @@ function renderStatus() {
     ? "Connected to FastAPI endpoints."
     : state.source === "mock"
       ? "Backend endpoints unavailable. Mock data keeps the UI demoable."
-      : "Backend disconnected. The interface will recover when endpoints respond again.";
+      : "Backend disconnected. The interface will recover when endpoints return.";
+
+  elements.settingsSummary.textContent = isLiveData()
+    ? "Backend controls are available from this page."
+    : "Actions post to the backend when it is ready.";
 }
 
 function renderAll() {
@@ -533,133 +626,6 @@ function normalizeStatus(payload) {
   return payload && !Array.isArray(payload) ? payload : mockStatus();
 }
 
-function mockLatestPacket() {
-  const now = new Date();
-  const temperature = 24.3 + Math.sin(now.getMinutes() / 8) * 1.8;
-  const humidity = 46 + Math.sin(now.getMinutes() / 10) * 6;
-  const pressure = 1012.4 + Math.cos(now.getMinutes() / 9) * 1.3;
-  const distance = 72 + Math.sin(now.getSeconds() / 7) * 18;
-  const noise = 0.24 + Math.abs(Math.sin(now.getSeconds() / 4)) * 0.38;
-  const occupancy = distance < MOCK_CONFIG.thresholds.presence_distance_cm;
-  const events = mockEvents();
-
-  return {
-    timestamp: now.toISOString(),
-    temperature_c: Number(temperature.toFixed(1)),
-    humidity_percent: Number(humidity.toFixed(1)),
-    pressure_hpa: Number(pressure.toFixed(1)),
-    distance_cm: Number(distance.toFixed(1)),
-    noise_score: Number(noise.toFixed(2)),
-    occupancy,
-    last_event: events[0],
-    latest_media_url: events[0].media_url,
-    system: mockStatus(),
-    sensor_health: {
-      aht20: "ok",
-      dps310: "ok",
-      ultrasonic: occupancy ? "warning" : "ok",
-      microphone: noise > 0.55 ? "warning" : "ok",
-      camera: "ok",
-      storage: "ok",
-    },
-  };
-}
-
-function mockSnapshotData(label, accent, background) {
-  const svg = `
-    <svg xmlns="http://www.w3.org/2000/svg" width="900" height="600" viewBox="0 0 900 600">
-      <defs>
-        <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
-          <stop offset="0%" stop-color="${background}" />
-          <stop offset="100%" stop-color="#08161c" />
-        </linearGradient>
-      </defs>
-      <rect width="900" height="600" fill="url(#bg)" />
-      <circle cx="700" cy="130" r="110" fill="${accent}" fill-opacity="0.16" />
-      <circle cx="180" cy="470" r="140" fill="#73c1ff" fill-opacity="0.12" />
-      <rect x="72" y="78" width="756" height="444" rx="28" fill="rgba(4,16,21,0.34)" stroke="${accent}" stroke-opacity="0.5" />
-      <text x="96" y="170" fill="#edf9f7" font-size="54" font-family="Segoe UI, Arial, sans-serif">Smart Home Hub</text>
-      <text x="96" y="244" fill="${accent}" font-size="34" font-family="Segoe UI, Arial, sans-serif">${label}</text>
-      <text x="96" y="318" fill="#8baeb1" font-size="24" font-family="Segoe UI, Arial, sans-serif">Mock snapshot for frontend testing before camera integration.</text>
-      <text x="96" y="372" fill="#8baeb1" font-size="24" font-family="Segoe UI, Arial, sans-serif">Backend media URLs can replace this immediately.</text>
-    </svg>
-  `.trim();
-
-  return `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`;
-}
-
-function mockEvents() {
-  const base = Date.now();
-  return [
-    {
-      id: 17,
-      timestamp: new Date(base - 90 * 1000).toISOString(),
-      event_type: "MOTION_DETECTED",
-      severity: "medium",
-      message: "Ultrasonic distance changed rapidly near the entry zone.",
-      media_url: mockSnapshotData("Motion detected near entry zone", "#85f1f4", "#153742"),
-      acknowledged: false,
-    },
-    {
-      id: 16,
-      timestamp: new Date(base - 8 * 60 * 1000).toISOString(),
-      event_type: "LOUD_NOISE",
-      severity: "high",
-      message: "Noise score exceeded threshold for 0.5 seconds.",
-      media_url: mockSnapshotData("Loud noise trigger", "#ff965f", "#35201a"),
-      acknowledged: false,
-    },
-    {
-      id: 15,
-      timestamp: new Date(base - 24 * 60 * 1000).toISOString(),
-      event_type: "HIGH_HUMIDITY",
-      severity: "medium",
-      message: "Humidity remained above configured threshold for 30 seconds.",
-      media_url: "",
-      acknowledged: true,
-    },
-    {
-      id: 14,
-      timestamp: new Date(base - 55 * 60 * 1000).toISOString(),
-      event_type: "SYSTEM_ONLINE",
-      severity: "low",
-      message: "Services restarted and the hub returned to monitoring mode.",
-      media_url: "",
-      acknowledged: true,
-    },
-  ];
-}
-
-function mockHistory() {
-  const now = Date.now();
-  return Array.from({ length: 24 }, (_, index) => {
-    const hoursAgo = 23 - index;
-    const timestamp = new Date(now - hoursAgo * 60 * 60 * 1000).toISOString();
-    const temperature = 22 + Math.sin(index / 4) * 3 + (index > 18 ? 1 : 0);
-    const humidity = 44 + Math.cos(index / 5) * 8;
-    const pressure = 1014 - index * 0.05 + Math.sin(index / 3) * 0.7;
-    const noise = 0.2 + Math.abs(Math.sin(index / 2.2)) * 0.38;
-
-    return {
-      timestamp,
-      temperature_c: Number(temperature.toFixed(1)),
-      humidity_percent: Number(humidity.toFixed(1)),
-      pressure_hpa: Number(pressure.toFixed(1)),
-      noise_score: Number(noise.toFixed(2)),
-    };
-  });
-}
-
-function mockStatus() {
-  return {
-    status: "online",
-    ip_address: "192.168.1.42",
-    disk_free_gb: 823.4,
-    cpu_temp_c: 48.2,
-    uptime_seconds: 5421,
-  };
-}
-
 async function postJson(url, payload) {
   const response = await fetch(url, {
     method: "POST",
@@ -692,9 +658,18 @@ function bindEvents() {
   });
 
   elements.cameraStream.addEventListener("error", () => {
+    state.camera.error = true;
+    state.camera.loaded = false;
     elements.cameraStream.hidden = true;
     elements.cameraStream.removeAttribute("src");
-    elements.snapshotEmpty.hidden = false;
+    setSnapshotPlaceholder("Live feed unavailable");
+  });
+
+  elements.cameraStream.addEventListener("load", () => {
+    state.camera.loaded = true;
+    state.camera.error = false;
+    elements.cameraStream.hidden = false;
+    setSnapshotPlaceholder("", true);
   });
 
   elements.forceRefresh.addEventListener("click", async () => {
@@ -750,7 +725,7 @@ function bindEvents() {
   });
 }
 
-async function startPolling() {
+function startPolling() {
   setInterval(() => refreshPanel(loadLatest), POLL_INTERVALS.latest);
   setInterval(() => refreshPanel(loadEvents), POLL_INTERVALS.events);
   setInterval(() => refreshPanel(loadHistory), POLL_INTERVALS.history);
@@ -761,7 +736,7 @@ async function init() {
   setRoute(routeFromLocation(), false);
   bindEvents();
   await hydrateAll();
-  await startPolling();
+  startPolling();
 }
 
 init();
